@@ -1,16 +1,19 @@
-// INTERLOCK | https://github.com/inversepath/interlock
-// Copyright (c) 2015-2016 Inverse Path S.r.l.
+// INTERLOCK | https://github.com/f-secure-foundry/interlock
+// Copyright (c) F-Secure Corporation
 //
 // Use of this source code is governed by the license
 // that can be found in the LICENSE file.
+//
+//+build linux
 
-package main
+package interlock
 
 import (
 	"bytes"
 	"errors"
 	"log"
 	"os/exec"
+	"syscall"
 )
 
 func execCommand(cmd string, args []string, root bool, input string) (output string, err error) {
@@ -32,6 +35,7 @@ func execCommand(cmd string, args []string, root bool, input string) (output str
 
 		if err != nil {
 			err = errors.New("error writing to stdin")
+			return
 		}
 	}
 
@@ -49,4 +53,14 @@ func execCommand(cmd string, args []string, root bool, input string) (output str
 	}
 
 	return stdout.String(), err
+}
+
+func ioctl(fd, cmd, arg uintptr) (err error) {
+	_, _, e := syscall.Syscall(syscall.SYS_IOCTL, fd, cmd, arg)
+
+	if e != 0 {
+		return syscall.Errno(e)
+	}
+
+	return
 }

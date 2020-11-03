@@ -1,5 +1,5 @@
-/** INTERLOCK | https://github.com/inversepath/interlock
- * Copyright (c) 2015-2016 Inverse Path S.r.l.
+/** INTERLOCK | https://github.com/f-secure-foundry/interlock
+ * Copyright (c) F-Secure Corporation
  *
  * Use of this source code is governed by the license
  * that can be found in the LICENSE file.
@@ -18,6 +18,7 @@ Interlock.Session = new function() {
   var logs = [];
 
   sessionStorage.InterlockVersion = sessionStorage.InterlockVersion ? sessionStorage.InterlockVersion : '';
+  sessionStorage.InterlockKeyPath = sessionStorage.InterlockKeyPath ? sessionStorage.InterlockKeyPath : '';
   sessionStorage.lastAsyncOperation = 0;
   sessionStorage.lastLog = sessionStorage.lastLog ? sessionStorage.lastLog : 0;
   sessionStorage.logs = sessionStorage.logs ? sessionStorage.logs : JSON.stringify(logs);
@@ -281,6 +282,7 @@ Interlock.Session.logoutCallback = function(backendData) {
       sessionStorage.removeItem('XSRFToken');
       sessionStorage.removeItem('volume');
       sessionStorage.removeItem('InterlockVersion');
+      sessionStorage.removeItem('InterlockKeyPath');
 
       $.get("/templates/login.html", function(data) {
         $('body').html(data);
@@ -338,6 +340,7 @@ Interlock.Session.powerOffCallback = function(backendData) {
         sessionStorage.removeItem('XSRFToken');
         sessionStorage.removeItem('volume');
         sessionStorage.removeItem('InterlockVersion');
+        sessionStorage.removeItem('InterlockKeyPath');
 
         var elements = [$(document.createElement('p')).text('The device is shutting down, please allow a few seconds before removal.')];
 
@@ -467,6 +470,7 @@ Interlock.Session.getVersionCallback = function(backendData) {
     if (backendData.status === 'OK') {
       sessionStorage.InterlockVersion = (backendData.response.revision ? backendData.response.revision : '') +
                                         (backendData.response.build ? ' | build: ' + backendData.response.build : '');
+      sessionStorage.InterlockKeyPath = backendData.response.key_path ? backendData.response.key_path : ''
     } else {
       Interlock.Session.createEvent({'kind': backendData.status,
                                      'msg': '[Interlock.Session.getVersionCallback] ' + backendData.response});

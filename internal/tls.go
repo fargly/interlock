@@ -1,10 +1,10 @@
-// INTERLOCK | https://github.com/inversepath/interlock
-// Copyright (c) 2015-2016 Inverse Path S.r.l.
+// INTERLOCK | https://github.com/f-secure-foundry/interlock
+// Copyright (c) F-Secure Corporation
 //
 // Use of this source code is governed by the license
 // that can be found in the LICENSE file.
 
-package main
+package interlock
 
 import (
 	"crypto/ecdsa"
@@ -19,6 +19,7 @@ import (
 	"log"
 	"log/syslog"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -26,17 +27,23 @@ import (
 	"time"
 )
 
-func startServer() (err error) {
+func StartServer() (err error) {
 	var server *http.Server
 	var TLSCert []byte
 	var TLSKey []byte
 
-	if conf.TLS == "gen" {
-		err = generateTLSCerts()
-	}
+	err = registerHandlers(conf.StaticPath)
 
 	if err != nil {
 		return
+	}
+
+	if conf.TLS == "gen" {
+		err = generateTLSCerts()
+
+		if err != nil {
+			return
+		}
 	}
 
 	if conf.TLS == "off" {
@@ -142,25 +149,26 @@ func generateTLSCerts() (err error) {
 		return nil
 	}
 
-	cn := strings.Split(conf.BindAddress, ":")[0]
+	address := net.ParseIP(strings.Split(conf.BindAddress, ":")[0])
 	serial, _ := rand.Int(rand.Reader, big.NewInt(1<<63-1))
 
-	status.Log(syslog.LOG_NOTICE, "generating TLS keypair CN: %s, Serial: % X", cn, serial)
+	status.Log(syslog.LOG_NOTICE, "generating TLS keypair IP: %s, Serial: % X", address.String(), serial)
 
 	certTemplate := x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
 			Organization:       []string{"INTERLOCK"},
 			OrganizationalUnit: []string{"generateTLSCerts()"},
-			CommonName:         cn,
+			CommonName:         address.String(),
 		},
+		IPAddresses:        []net.IP{address},
 		SignatureAlgorithm: x509.ECDSAWithSHA256,
 		PublicKeyAlgorithm: x509.ECDSA,
 		NotBefore:          time.Now(),
 		NotAfter:           time.Now().AddDate(5, 0, 0),
 		SubjectKeyId:       []byte{1, 2, 3, 4, 5},
-		KeyUsage:           x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:        []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		KeyUsage:           x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:        []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 
 	caTemplate := certTemplate
@@ -180,8 +188,8 @@ func generateTLSCerts() (err error) {
 	}
 
 	pem.Encode(TLSCert, &pem.Block{Type: "CERTIFICATE", Bytes: cert})
-	ec_b, _ := x509.MarshalECPrivateKey(priv)
-	pem.Encode(TLSKey, &pem.Block{Type: "EC PRIVATE KEY", Bytes: ec_b})
+	ecb, _ := x509.MarshalECPrivateKey(priv)
+	pem.Encode(TLSKey, &pem.Block{Type: "EC PRIVATE KEY", Bytes: ecb})
 
 	h := sha256.New()
 	h.Write(cert)

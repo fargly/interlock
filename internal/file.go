@@ -1,12 +1,15 @@
-// INTERLOCK | https://github.com/inversepath/interlock
-// Copyright (c) 2015-2016 Inverse Path S.r.l.
+// INTERLOCK | https://github.com/f-secure-foundry/interlock
+// Copyright (c) F-Secure Corporation
 //
 // Use of this source code is governed by the license
 // that can be found in the LICENSE file.
+//
+//+build linux
 
-package main
+package interlock
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -18,7 +21,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -29,7 +31,6 @@ const (
 	_copy
 	_mkdir
 	_extract
-	_compress
 	_delete
 )
 
@@ -41,6 +42,7 @@ type inode struct {
 	KeyPath bool   `json:"key_path"`
 	Private bool   `json:"private"`
 	Key     *key   `json:"key"`
+	SHA256  string `json:"sha256"`
 }
 
 type downloadCache struct {
@@ -52,7 +54,7 @@ var download = downloadCache{
 	cache: make(map[string]string),
 }
 
-var traversalPattern = regexp.MustCompile("\\.\\./")
+const traversalPattern = "../"
 
 func (d *downloadCache) Add(id string, path string) {
 	d.Lock()
@@ -80,20 +82,20 @@ func (d *downloadCache) Remove(id string) (path string, err error) {
 }
 
 func absolutePath(subPath string) (path string, err error) {
-	if traversalPattern.MatchString(subPath) {
+	if strings.Contains(subPath, traversalPattern) {
 		err = errors.New("path traversal detected")
 	}
 
-	path = filepath.Join(conf.mountPoint, subPath)
+	path = filepath.Join(conf.MountPoint, subPath)
 
 	return
 }
 
 func relativePath(p string) (subPath string) {
-	if !strings.HasPrefix(p, conf.mountPoint) {
+	if !strings.HasPrefix(p, conf.MountPoint) {
 		subPath = path.Base(p)
 	} else {
-		subPath = p[len(conf.mountPoint):]
+		subPath = p[len(conf.MountPoint):]
 	}
 
 	return
@@ -101,7 +103,7 @@ func relativePath(p string) (subPath string) {
 
 func detectKeyPath(path string) (inKeyPath bool, private bool) {
 	inKeyPath = false
-	absoluteKeyPath := filepath.Join(conf.mountPoint, conf.KeyPath)
+	absoluteKeyPath := filepath.Join(conf.MountPoint, conf.KeyPath)
 
 	if strings.HasPrefix(path, absoluteKeyPath) {
 		inKeyPath = true
@@ -115,24 +117,72 @@ func detectKeyPath(path string) (inKeyPath bool, private bool) {
 	return
 }
 
-func fileMove(w http.ResponseWriter, r *http.Request) jsonObject {
-	return fileMultiOp(w, r, _move)
+func fileMove(r *http.Request) jsonObject {
+	return fileMultiOp(r, _move)
 }
 
-func fileCopy(w http.ResponseWriter, r *http.Request) jsonObject {
-	return fileMultiOp(w, r, _copy)
+func fileCopy(r *http.Request) jsonObject {
+	return fileMultiOp(r, _copy)
 }
 
-func fileMkdir(w http.ResponseWriter, r *http.Request) jsonObject {
-	return fileMultiOp(w, r, _mkdir)
+func fileNewfile(r *http.Request) (res jsonObject) {
+	req, err := parseRequest(r)
+
+	if err != nil {
+		return errorResponse(err, "")
+	}
+
+	err = validateRequest(req, []string{"path:s", "contents:s"})
+
+	if err != nil {
+		return errorResponse(err, "")
+	}
+
+	path, err := absolutePath(req["path"].(string))
+
+	if err != nil {
+		return errorResponse(err, "")
+	}
+
+	inKeyPath, _ := detectKeyPath(path)
+
+	if inKeyPath {
+		return errorResponse(errors.New("creating files within key storage is not allowed"), "")
+	}
+
+	_, err = os.Stat(path)
+
+	if err == nil {
+		return errorResponse(fmt.Errorf("path %s exists, not overwriting", relativePath(path)), "")
+	}
+
+	contents := req["contents"].(string)
+	err = ioutil.WriteFile(path, []byte(contents), 0644)
+
+	if err != nil {
+		return errorResponse(errors.New("cannot create file"), "")
+	}
+
+	status.Log(syslog.LOG_NOTICE, "created file %s (%d bytes)", relativePath(path), len(contents))
+
+	res = jsonObject{
+		"status":   "OK",
+		"response": nil,
+	}
+
+	return
 }
 
-func fileExtract(w http.ResponseWriter, r *http.Request) jsonObject {
-	return fileMultiOp(w, r, _extract)
+func fileMkdir(r *http.Request) jsonObject {
+	return fileMultiOp(r, _mkdir)
 }
 
-func fileDelete(w http.ResponseWriter, r *http.Request) jsonObject {
-	return fileMultiOp(w, r, _delete)
+func fileExtract(r *http.Request) jsonObject {
+	return fileMultiOp(r, _extract)
+}
+
+func fileDelete(r *http.Request) jsonObject {
+	return fileMultiOp(r, _delete)
 }
 
 func fileCompress(w http.ResponseWriter, r *http.Request) (res jsonObject) {
@@ -184,7 +234,7 @@ func fileCompress(w http.ResponseWriter, r *http.Request) (res jsonObject) {
 	return
 }
 
-func fileMultiOp(w http.ResponseWriter, r *http.Request, mode int) (res jsonObject) {
+func fileMultiOp(r *http.Request, mode int) (res jsonObject) {
 	var srcAttr string
 	var dst string
 
@@ -198,6 +248,10 @@ func fileMultiOp(w http.ResponseWriter, r *http.Request, mode int) (res jsonObje
 	case _move, _copy, _extract:
 		err = validateRequest(req, []string{"src:a", "dst:s"})
 		srcAttr = "src"
+
+		if err != nil {
+			return errorResponse(err, "")
+		}
 
 		dst, err = absolutePath(req["dst"].(string))
 
@@ -256,16 +310,16 @@ func fileOp(src string, dst string, mode int) (err error) {
 			stat, err = os.Stat(dst)
 
 			if err == nil && !stat.IsDir() {
-				err = fmt.Errorf("path %s exists", dst)
+				err = fmt.Errorf("path %s exists", relativePath(dst))
 				break
 			}
 
 			if err == nil && stat.IsDir() {
 				d := filepath.Join(dst, path.Base(src))
-				stat, err = os.Stat(d)
+				_, err = os.Stat(d)
 
 				if err == nil {
-					err = fmt.Errorf("path %s exists", d)
+					err = fmt.Errorf("path %s exists", relativePath(d))
 					break
 				}
 			}
@@ -306,14 +360,14 @@ func fileOp(src string, dst string, mode int) (err error) {
 	return
 }
 
-func fileList(w http.ResponseWriter, r *http.Request) (res jsonObject) {
+func fileList(r *http.Request) (res jsonObject) {
 	req, err := parseRequest(r)
 
 	if err != nil {
 		return errorResponse(err, "")
 	}
 
-	err = validateRequest(req, []string{"path:s"})
+	err = validateRequest(req, []string{"path:s", "sha256:b"})
 
 	if err != nil {
 		return errorResponse(err, "")
@@ -371,6 +425,20 @@ func fileList(w http.ResponseWriter, r *http.Request) (res jsonObject) {
 			}
 		}
 
+		if !file.IsDir() && req["sha256"].(bool) {
+			f, err := os.Open(filePath)
+
+			if err == nil {
+				defer f.Close()
+
+				h := sha256.New()
+
+				if _, err := io.Copy(h, f); err == nil {
+					inode.SHA256 = fmt.Sprintf("%x", h.Sum(nil))
+				}
+			}
+		}
+
 		inodes = append(inodes, inode)
 	}
 
@@ -379,7 +447,8 @@ func fileList(w http.ResponseWriter, r *http.Request) (res jsonObject) {
 		"response": map[string]interface{}{
 			"total_space": totalSpace,
 			"free_space":  freeSpace,
-			"inodes":      inodes},
+			"inodes":      inodes,
+		},
 	}
 
 	return
@@ -446,7 +515,7 @@ func fileUpload(w http.ResponseWriter, r *http.Request) {
 	status.Log(syslog.LOG_INFO, "uploaded %s (%v bytes)", relativePath(osPath), written)
 }
 
-func fileDownload(w http.ResponseWriter, r *http.Request) (res jsonObject) {
+func fileDownload(r *http.Request) (res jsonObject) {
 	req, err := parseRequest(r)
 
 	if err != nil {
@@ -532,7 +601,8 @@ func fileDownloadByID(w http.ResponseWriter, id string) {
 	if stat.IsDir() {
 		written, err = zipWriter([]string{osPath}, w)
 	} else {
-		input, err := os.Open(osPath)
+		var input *os.File
+		input, err = os.Open(osPath)
 
 		if err != nil {
 			return
@@ -549,7 +619,7 @@ func fileDownloadByID(w http.ResponseWriter, id string) {
 	status.Log(syslog.LOG_INFO, "downloaded %s (%v bytes)", fileName, written)
 }
 
-func fileEncrypt(w http.ResponseWriter, r *http.Request) (res jsonObject) {
+func fileEncrypt(r *http.Request) (res jsonObject) {
 	req, err := parseRequest(r)
 
 	if err != nil {
@@ -590,7 +660,7 @@ func fileEncrypt(w http.ResponseWriter, r *http.Request) (res jsonObject) {
 	}
 
 	if cipher.GetInfo().KeyFormat != "password" {
-		keyPath = filepath.Join(conf.mountPoint, keyPath)
+		keyPath = filepath.Join(conf.MountPoint, keyPath)
 		key, _, err := getKey(keyPath)
 
 		if err != nil {
@@ -605,7 +675,7 @@ func fileEncrypt(w http.ResponseWriter, r *http.Request) (res jsonObject) {
 	}
 
 	if sign && cipher.GetInfo().Sig {
-		sigKeyPath = filepath.Join(conf.mountPoint, sigKeyPath)
+		sigKeyPath = filepath.Join(conf.MountPoint, sigKeyPath)
 		key, _, err := getKey(sigKeyPath)
 
 		if err != nil {
@@ -679,7 +749,7 @@ func fileEncrypt(w http.ResponseWriter, r *http.Request) (res jsonObject) {
 	return
 }
 
-func fileDecrypt(w http.ResponseWriter, r *http.Request) (res jsonObject) {
+func fileDecrypt(r *http.Request) (res jsonObject) {
 	var outputPath string
 
 	req, err := parseRequest(r)
@@ -729,7 +799,7 @@ func fileDecrypt(w http.ResponseWriter, r *http.Request) (res jsonObject) {
 	}
 
 	if cipher.GetInfo().KeyFormat != "password" {
-		keyPath = filepath.Join(conf.mountPoint, keyPath)
+		keyPath = filepath.Join(conf.MountPoint, keyPath)
 		key, _, err := getKey(keyPath)
 
 		if err != nil {
@@ -750,7 +820,7 @@ func fileDecrypt(w http.ResponseWriter, r *http.Request) (res jsonObject) {
 	}
 
 	if verify && cipher.GetInfo().Sig {
-		sigKeyPath = filepath.Join(conf.mountPoint, sigKeyPath)
+		sigKeyPath = filepath.Join(conf.MountPoint, sigKeyPath)
 		key, _, err := getKey(sigKeyPath)
 
 		if err != nil {
@@ -806,7 +876,7 @@ func fileDecrypt(w http.ResponseWriter, r *http.Request) (res jsonObject) {
 	return
 }
 
-func fileSign(w http.ResponseWriter, r *http.Request) (res jsonObject) {
+func fileSign(r *http.Request) (res jsonObject) {
 	req, err := parseRequest(r)
 
 	if err != nil {
@@ -839,7 +909,7 @@ func fileSign(w http.ResponseWriter, r *http.Request) (res jsonObject) {
 		return errorResponse(errors.New("signing requested but not supported by cipher"), "")
 	}
 
-	keyPath = filepath.Join(conf.mountPoint, keyPath)
+	keyPath = filepath.Join(conf.MountPoint, keyPath)
 	key, _, err := getKey(keyPath)
 
 	if err != nil {
@@ -901,7 +971,7 @@ func fileSign(w http.ResponseWriter, r *http.Request) (res jsonObject) {
 	return
 }
 
-func fileVerify(w http.ResponseWriter, r *http.Request) (res jsonObject) {
+func fileVerify(r *http.Request) (res jsonObject) {
 	req, err := parseRequest(r)
 
 	if err != nil {
@@ -940,7 +1010,7 @@ func fileVerify(w http.ResponseWriter, r *http.Request) (res jsonObject) {
 	}
 
 	if cipher.GetInfo().KeyFormat != "password" {
-		sigKeyPath = filepath.Join(conf.mountPoint, sigKeyPath)
+		sigKeyPath = filepath.Join(conf.MountPoint, sigKeyPath)
 		key, _, err := getKey(sigKeyPath)
 
 		if err != nil {

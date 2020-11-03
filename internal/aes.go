@@ -1,12 +1,13 @@
-// INTERLOCK | https://github.com/inversepath/interlock
-// Copyright (c) 2015-2016 Inverse Path S.r.l.
+// INTERLOCK | https://github.com/f-secure-foundry/interlock
+// Copyright (c) F-Secure Corporation
 //
 // Use of this source code is governed by the license
 // that can be found in the LICENSE file.
 
-package main
+package interlock
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -87,13 +88,13 @@ func (a *aes256OFB) Encrypt(input *os.File, output *os.File, sign bool) (err err
 		return
 	}
 
-	salt, key, err := DeriveKeyPBKDF2(nil, a.password)
+	salt, key, err := deriveKeyPBKDF2(nil, a.password, derivedKeySize)
 
 	if err != nil {
 		return
 	}
 
-	err = EncryptOFB(key, salt, iv, input, output)
+	err = encryptOFB(key, salt, iv, input, output)
 
 	return
 }
@@ -117,13 +118,13 @@ func (a *aes256OFB) Decrypt(input *os.File, output *os.File, verify bool) (err e
 		return
 	}
 
-	_, key, err := DeriveKeyPBKDF2(salt, a.password)
+	_, key, err := deriveKeyPBKDF2(salt, a.password, derivedKeySize)
 
 	if err != nil {
 		return
 	}
 
-	err = DecryptOFB(key, salt, iv, input, output)
+	err = decryptOFB(key, salt, iv, input, output)
 
 	return
 }
@@ -155,12 +156,12 @@ func (a *aes256OFB) GenOTP(timestamp int64) (otp string, exp int64, err error) {
 	return
 }
 
-func (a *aes256OFB) HandleRequest(w http.ResponseWriter, r *http.Request) (res jsonObject) {
-	res = notFound(w)
+func (a *aes256OFB) HandleRequest(r *http.Request) (res jsonObject) {
+	res = notFound()
 	return
 }
 
-func EncryptOFB(key []byte, salt []byte, iv []byte, input *os.File, output *os.File) (err error) {
+func encryptOFB(key []byte, salt []byte, iv []byte, input *os.File, output *os.File) (err error) {
 	block, err := aes.NewCipher(key)
 
 	if err != nil {
@@ -216,7 +217,7 @@ func EncryptOFB(key []byte, salt []byte, iv []byte, input *os.File, output *os.F
 	return
 }
 
-func DecryptOFB(key []byte, salt []byte, iv []byte, input *os.File, output *os.File) (err error) {
+func decryptOFB(key []byte, salt []byte, iv []byte, input *os.File, output *os.File) (err error) {
 	block, err := aes.NewCipher(key)
 
 	if err != nil {
@@ -229,12 +230,18 @@ func DecryptOFB(key []byte, salt []byte, iv []byte, input *os.File, output *os.F
 		return
 	}
 
-	headerSize := (int64)(len(salt) + len(iv))
-	limit := stat.Size() - headerSize - 32
+	headerSize, err := input.Seek(0, 1)
+
+	if err != nil {
+		return
+	}
 
 	mac := hmac.New(sha256.New, key)
 	mac.Write(salt)
 	mac.Write(iv)
+
+	macSize := int64(mac.Size())
+	limit := stat.Size() - headerSize - macSize
 
 	ciphertextReader := io.LimitReader(input, limit)
 	_, err = io.Copy(mac, ciphertextReader)
@@ -243,14 +250,14 @@ func DecryptOFB(key []byte, salt []byte, iv []byte, input *os.File, output *os.F
 		return
 	}
 
-	inputMac := make([]byte, 32)
-	_, err = input.ReadAt(inputMac, stat.Size()-32)
+	inputMac := make([]byte, mac.Size())
+	_, err = input.ReadAt(inputMac, stat.Size()-macSize)
 
 	if err != nil {
 		return
 	}
 
-	if hmac.Equal(inputMac, mac.Sum(nil)) == false {
+	if !hmac.Equal(inputMac, mac.Sum(nil)) {
 		return errors.New("invalid HMAC")
 	}
 
@@ -268,4 +275,25 @@ func DecryptOFB(key []byte, salt []byte, iv []byte, input *os.File, output *os.F
 	_, err = io.Copy(writer, ciphertextReader)
 
 	return
+}
+
+func PKCS7Pad(buf []byte, extraBlock bool) []byte {
+	padLen := 0
+	r := len(buf) % aes.BlockSize
+
+	if r != 0 {
+		padLen = aes.BlockSize - r
+	} else if extraBlock {
+		padLen = aes.BlockSize
+	}
+
+	padding := []byte{(byte)(padLen)}
+	padding = bytes.Repeat(padding, padLen)
+	buf = append(buf, padding...)
+
+	return buf
+}
+
+func PKCS7Unpad(buf []byte) []byte {
+	return buf[:(len(buf) - int(buf[len(buf)-1]))]
 }

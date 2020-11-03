@@ -1,10 +1,10 @@
-// INTERLOCK | https://github.com/inversepath/interlock
-// Copyright (c) 2015-2016 Inverse Path S.r.l.
+// INTERLOCK | https://github.com/f-secure-foundry/interlock
+// Copyright (c) F-Secure Corporation
 //
 // Use of this source code is governed by the license
 // that can be found in the LICENSE file.
 
-package main
+package interlock
 
 import (
 	"crypto/subtle"
@@ -29,24 +29,24 @@ func (s *sessionData) Validate(r *http.Request) (validSessionID bool, validXSRFT
 	validSessionID = false
 	validXSRFToken = false
 
-	sessionID, err := r.Cookie("INTERLOCK-Token")
+	sessionID, err := r.Cookie(sessionCookie)
 
 	if err != nil {
 		return
 	}
 
-	XSRFToken := r.Header.Get("X-XSRFToken")
+	XSRFToken := r.Header.Get(XSRFHeader)
 
 	session.Lock()
 	defer session.Unlock()
 
-	if len(session.SessionID) == len(sessionID.Value) && subtle.ConstantTimeCompare([]byte(session.SessionID), []byte(sessionID.Value)) == 1 {
+	if subtle.ConstantTimeCompare([]byte(session.SessionID), []byte(sessionID.Value)) == 1 {
 		validSessionID = true
 	} else {
 		err = errors.New("invalid session")
 	}
 
-	if len(session.XSRFToken) == len(XSRFToken) && subtle.ConstantTimeCompare([]byte(session.XSRFToken), []byte(XSRFToken)) == 1 {
+	if subtle.ConstantTimeCompare([]byte(session.XSRFToken), []byte(XSRFToken)) == 1 {
 		validXSRFToken = true
 	} else {
 		err = errors.New("missing XSRFToken")

@@ -1,5 +1,5 @@
-/** INTERLOCK | https://github.com/inversepath/interlock
- * Copyright (c) 2015-2016 Inverse Path S.r.l.
+/** INTERLOCK | https://github.com/f-secure-foundry/interlock
+ * Copyright (c) F-Secure Corporation
  *
  * Use of this source code is governed by the license
  * that can be found in the LICENSE file.
@@ -38,7 +38,8 @@ Interlock.Backend = new function() {
                                'verify':   'file/verify',
                                'sign':     'file/sign',
                                'extract':  'file/extract',
-                               'compress': 'file/compress' },
+                               'compress': 'file/compress',
+                               'newfile':  'file/new' },
 
                'crypto':     { 'ciphers':     'crypto/ciphers',
                                'keys':        'crypto/keys',

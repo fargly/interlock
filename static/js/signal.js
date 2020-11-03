@@ -1,5 +1,5 @@
-/** INTERLOCK | https://github.com/inversepath/interlock
- * Copyright (c) 2015-2016 Inverse Path S.r.l.
+/** INTERLOCK | https://github.com/f-secure-foundry/interlock
+ * Copyright (c) F-Secure Corporation
  *
  * Use of this source code is governed by the license
  * that can be found in the LICENSE file.
@@ -50,16 +50,16 @@ Interlock.Signal.chat = function(contact) {
                                                        .attr('placeholder', 'Send Signal message')
                                                        .addClass('text ui-widget-content ui-corner-all key')];
 
-  var buttons = {  'Close': function() {
-                     Interlock.Signal.historyPollerInterval[contact] = 0;
-                     Interlock.UI.modalFormDialog('close');
-                   },
-                   'Send': function() {
-                     if ($('#msg').val().length > 0) {
-                       Interlock.Signal.send(contact, $('#msg').val())
-                     }
-                   }
-                 };
+  var buttons = { 'Close': function() {
+                    Interlock.Signal.historyPollerInterval[contact] = 0;
+                    Interlock.UI.modalFormDialog('close');
+                  },
+                  'Send': function() {
+                    if ($('#msg').val().length > 0) {
+                      Interlock.Signal.send(contact, $('#msg').val());
+                    }
+                  }
+                };
 
   var contactName = contact.split('/').pop().split('.Signal')[0] || 'Unknown Contact';
 
@@ -72,6 +72,12 @@ Interlock.Signal.chat = function(contact) {
     /* open the help dialog for the Signal send attachment feature */
     buttons['Send Attachment'] = function() { Interlock.Signal.attachmentHelpDialog(); };
   }
+
+  buttons['Verify'] = function() {
+    var remote = 'remote_' + contact.split(/\s\+/).pop();
+    var key_path = '/' + sessionStorage.InterlockKeyPath + '/signal/private/identity/';
+    Interlock.Crypto.keyInfo(key_path + remote);
+  };
 
   Interlock.UI.modalFormConfigure({elements: elements, buttons: buttons,
                                    noCancelButton: true, noCloseButton:true,
@@ -102,8 +108,14 @@ Interlock.Signal.getHistoryCallback = function(backendData, args) {
       /* ensure that the history poller for the selected contact is
          still active before to actually refresh the chat history */
       if (Interlock.Signal.historyPollerInterval[args.contact] > 0) {
-          $('#history').text(backendData.response);
-          $('#history').scrollTop(10000);
+        if ($('#history').text() !== backendData.response) {
+          if ($('#history').scrollTop() + $('#history').height() === $('#history').prop('scrollHeight')) {
+            $('#history').text(backendData.response);
+            $('#history').scrollTop($('#history').prop('scrollHeight'));
+          } else {
+            $('#history').text(backendData.response);
+          }
+        }
       }
     } else {
       Interlock.Session.createEvent({'kind': backendData.status,
@@ -170,8 +182,6 @@ Interlock.Signal.sendCallback = function(backendData, args) {
       Interlock.Signal.getHistory(args.contact);
 
       if (args.attachment === true) {
-        sessionStorage.clipBoard = JSON.stringify({ 'action': 'none', 'paths': undefined, 'isSingleFile': false });
-
         /* re-set the dialog if an attachment has been sent */
         Interlock.UI.modalFormDialog('close');
         Interlock.Signal.chat(args.contact);
@@ -183,6 +193,9 @@ Interlock.Signal.sendCallback = function(backendData, args) {
   } catch (e) {
     Interlock.Session.createEvent({'kind': 'critical',
       'msg': '[Interlock.Signal.sendCallback] ' + e});
+  } finally {
+    Interlock.Signal.historyPollerInterval[args.contact] = 5000;
+    $('.ui-dialog > .ajax_overlay').remove();
   }
 };
 
@@ -201,6 +214,9 @@ Interlock.Signal.sendCallback = function(backendData, args) {
  */
 Interlock.Signal.send = function(contact, msg, attachment) {
   try {
+    Interlock.Signal.historyPollerInterval[contact] = 0;
+    Interlock.UI.ajaxLoader('.ui-dialog');
+
     if (attachment !== undefined) {
       Interlock.Backend.APIRequest(Interlock.Backend.API.Signal.send, 'POST',
         JSON.stringify({contact: contact, msg: msg, attachment: attachment}), 'Signal.sendCallback',

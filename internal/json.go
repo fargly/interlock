@@ -1,10 +1,10 @@
-// INTERLOCK | https://github.com/inversepath/interlock
-// Copyright (c) 2015-2016 Inverse Path S.r.l.
+// INTERLOCK | https://github.com/f-secure-foundry/interlock
+// Copyright (c) F-Secure Corporation
 //
 // Use of this source code is governed by the license
 // that can be found in the LICENSE file.
 
-package main
+package interlock
 
 import (
 	"encoding/json"
@@ -13,13 +13,12 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"regexp"
 	"strings"
 )
 
 type jsonObject map[string]interface{}
 
-var censorPattern = regexp.MustCompile("password")
+var censorPattern = "password"
 
 func parseRequest(r *http.Request) (j jsonObject, err error) {
 	body, err := ioutil.ReadAll(r.Body)
@@ -29,7 +28,7 @@ func parseRequest(r *http.Request) (j jsonObject, err error) {
 	}
 
 	if conf.Debug {
-		if conf.testMode || !censorPattern.Match(body) {
+		if conf.TestMode || strings.Contains(string(body), censorPattern) {
 			log.Printf("%s", body)
 		}
 	}

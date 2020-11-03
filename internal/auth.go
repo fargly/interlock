@@ -1,10 +1,12 @@
-// INTERLOCK | https://github.com/inversepath/interlock
-// Copyright (c) 2015-2016 Inverse Path S.r.l.
+// INTERLOCK | https://github.com/f-secure-foundry/interlock
+// Copyright (c) F-Secure Corporation
 //
 // Use of this source code is governed by the license
 // that can be found in the LICENSE file.
+//
+//+build linux
 
-package main
+package interlock
 
 import (
 	"crypto/rand"
@@ -13,10 +15,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 const cookieSize = 64
 const cookieAge = 8 * 60 * 60
+
+const sessionCookie = "INTERLOCK-Token"
+const XSRFHeader = "X-XSRFToken"
 
 func randomString(size int) (c string, err error) {
 	rb := make([]byte, size)
@@ -29,7 +35,7 @@ func randomString(size int) (c string, err error) {
 }
 
 func authenticate(volume string, password string, dispose bool) (err error) {
-	if conf.testMode {
+	if conf.TestMode {
 		conf.ActivateCiphers(true)
 		return
 	}
@@ -58,7 +64,7 @@ func authenticate(volume string, password string, dispose bool) (err error) {
 		return
 	}
 
-	err = os.MkdirAll(filepath.Join(conf.mountPoint, conf.KeyPath), 0700)
+	err = os.MkdirAll(filepath.Join(conf.MountPoint, conf.KeyPath), 0700)
 
 	if err != nil {
 		return
@@ -126,7 +132,7 @@ func login(w http.ResponseWriter, r *http.Request) (res jsonObject) {
 	}
 
 	sessionCookie := &http.Cookie{
-		Name:     "INTERLOCK-Token",
+		Name:     sessionCookie,
 		Value:    sessionID,
 		Path:     "/api",
 		MaxAge:   cookieAge,
@@ -146,10 +152,15 @@ func login(w http.ResponseWriter, r *http.Request) (res jsonObject) {
 
 	if !conf.Debug {
 		// switch logging to encrypted partition
-		enableFileLog()
+		EnableFileLog()
 	}
 
 	session.Set(req["volume"].(string), sessionID, XSRFToken)
+
+	go func() {
+		time.Sleep(cookieAge * time.Second)
+		session.Clear()
+	}()
 
 	res = jsonObject{
 		"status": "OK",
@@ -166,11 +177,11 @@ func logout(w http.ResponseWriter) (res jsonObject) {
 
 	if !conf.Debug {
 		// restore logging to syslog before unmounting encrypted partition
-		enableSyslog()
+		EnableSyslog()
 	}
 
 	sessionCookie := &http.Cookie{
-		Name:     "INTERLOCK-Token",
+		Name:     sessionCookie,
 		Value:    "delete",
 		Path:     "/api",
 		MaxAge:   -1,

@@ -1,10 +1,10 @@
-// INTERLOCK | https://github.com/inversepath/interlock
-// Copyright (c) 2015-2016 Inverse Path S.r.l.
+// INTERLOCK | https://github.com/f-secure-foundry/interlock
+// Copyright (c) F-Secure Corporation
 //
 // Use of this source code is governed by the license
 // that can be found in the LICENSE file.
 
-package main
+package interlock
 
 import (
 	"bytes"
@@ -81,15 +81,8 @@ func (t *tOTP) GetKeyInfo(k key) (info string, err error) {
 }
 
 func (t *tOTP) SetKey(k key) (err error) {
-	keyPath := filepath.Join(conf.mountPoint, k.Path)
-	keyFile, err := os.Open(keyPath)
-
-	if err != nil {
-		return
-	}
-	defer keyFile.Close()
-
-	s, err := ioutil.ReadAll(keyFile)
+	keyPath := filepath.Join(conf.MountPoint, k.Path)
+	s, err := ioutil.ReadFile(keyPath)
 
 	if err != nil {
 		return
@@ -167,7 +160,7 @@ func (t *tOTP) Verify(input *os.File, signature *os.File) error {
 	return errors.New("cipher does not support signature verification")
 }
 
-func (t *tOTP) HandleRequest(w http.ResponseWriter, r *http.Request) (res jsonObject) {
-	res = notFound(w)
+func (t *tOTP) HandleRequest(r *http.Request) (res jsonObject) {
+	res = notFound()
 	return
 }

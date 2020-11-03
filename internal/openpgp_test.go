@@ -1,10 +1,10 @@
-// INTERLOCK | https://github.com/inversepath/interlock
-// Copyright (c) 2015-2016 Inverse Path S.r.l.
+// INTERLOCK | https://github.com/f-secure-foundry/interlock
+// Copyright (c) F-Secure Corporation
 //
 // Use of this source code is governed by the license
 // that can be found in the LICENSE file.
 
-package main
+package interlock
 
 import (
 	"bytes"
@@ -16,7 +16,7 @@ import (
 )
 
 func TestOpenPGP(t *testing.T) {
-	conf.mountPoint = "/tmp"
+	conf.MountPoint = "/tmp"
 	password := "interlocktest"
 	cleartext := "01234567890ABCDEFGHILMNOPQRSTUVZ!@#"
 	o := &openPGP{}
@@ -101,8 +101,8 @@ func TestOpenPGP(t *testing.T) {
 	decrypted.Seek(0, 0)
 	compare, _ := ioutil.ReadAll(decrypted)
 
-	if bytes.Compare([]byte(cleartext), compare) != 0 {
-		t.Error("cleartext and decrypted text differ")
+	if !bytes.Equal([]byte(cleartext), compare) {
+		t.Error("cleartext and ciphertext differ")
 	}
 
 	input.Seek(0, 0)

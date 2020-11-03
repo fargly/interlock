@@ -1,17 +1,16 @@
-// INTERLOCK | https://github.com/inversepath/interlock
-// Copyright (c) 2015-2016 Inverse Path S.r.l.
+// INTERLOCK | https://github.com/f-secure-foundry/interlock
+// Copyright (c) F-Secure Corporation
 //
 // Use of this source code is governed by the license
 // that can be found in the LICENSE file.
 
-package main
+package interlock
 
 import (
 	"container/ring"
 	"fmt"
 	"log"
 	"log/syslog"
-	"net/http"
 	"sort"
 	"sync"
 	"syscall"
@@ -21,8 +20,8 @@ import (
 const bufferSize = 20
 
 // build information, initialized at compile time (see Makefile)
-var INTERLOCKBuild string
-var INTERLOCKRevision string
+var Build string
+var Revision string
 
 type statusBuffer struct {
 	sync.Mutex
@@ -96,29 +95,26 @@ func (s *statusBuffer) Notifications() (notifications []statusEntry) {
 	return
 }
 
-func (s *statusBuffer) Test(format string, a ...interface{}) {
-	fmt.Printf(format, a)
-}
+func versionStatus() (res jsonObject) {
+	build := Build
 
-func versionStatus(w http.ResponseWriter) (res jsonObject) {
-	build := INTERLOCKBuild
-
-	if conf.HSM != "" {
-		build += " | " + conf.HSM
+	if conf.HSM != "off" {
+		build += " " + conf.HSM
 	}
 
 	res = jsonObject{
 		"status": "OK",
 		"response": map[string]interface{}{
-			"revision": INTERLOCKRevision,
+			"revision": Revision,
 			"build":    build,
+			"key_path": conf.KeyPath,
 		},
 	}
 
 	return
 }
 
-func runningStatus(w http.ResponseWriter) (res jsonObject) {
+func runningStatus() (res jsonObject) {
 	sys := &syscall.Sysinfo_t{}
 	_ = syscall.Sysinfo(sys)
 

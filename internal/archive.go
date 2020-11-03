@@ -1,10 +1,10 @@
-// INTERLOCK | https://github.com/inversepath/interlock
-// Copyright (c) 2015-2016 Inverse Path S.r.l.
+// INTERLOCK | https://github.com/f-secure-foundry/interlock
+// Copyright (c) F-Secure Corporation
 //
 // Use of this source code is governed by the license
 // that can be found in the LICENSE file.
 
-package main
+package interlock
 
 import (
 	"archive/zip"
@@ -30,14 +30,24 @@ func zipWriter(src []string, dst io.Writer) (written int64, err error) {
 		}
 
 		if info.IsDir() {
+			// the downside of this optimization is that
+			// directories mtime is not preserved
 			return
 		}
 
 		n := status.Notify(syslog.LOG_NOTICE, "adding %s to archive", path.Base(osPath))
 		defer status.Remove(n)
 
+		fileHeader, err := zip.FileInfoHeader(info)
+
+		if err != nil {
+			return
+		}
+
 		relPath := strings.TrimPrefix(relativePath(osPath), "/")
-		f, err = writer.Create(relPath)
+		fileHeader.Name = relPath
+
+		f, err = writer.CreateHeader(fileHeader)
 
 		if err != nil {
 			return
@@ -118,7 +128,7 @@ func unzipFile(src string, dst string) (err error) {
 		defer status.Remove(n)
 
 		for _, f := range reader.Reader.File {
-			if traversalPattern.MatchString(f.Name) {
+			if strings.Contains(f.Name, traversalPattern) {
 				status.Error(errors.New("path traversal detected"))
 				return
 			}
@@ -165,6 +175,10 @@ func unzipFile(src string, dst string) (err error) {
 					status.Error(err)
 					return
 				}
+
+				output.Close()
+				//lint:ignore SA1019 incorrectly matches zip:*FileHeader.ModTime()
+				os.Chtimes(dstPath, f.ModTime(), f.ModTime())
 			}
 		}
 

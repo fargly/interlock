@@ -1,10 +1,10 @@
-// INTERLOCK | https://github.com/inversepath/interlock
-// Copyright (c) 2015-2016 Inverse Path S.r.l.
+// INTERLOCK | https://github.com/f-secure-foundry/interlock
+// Copyright (c) F-Secure Corporation
 //
 // Use of this source code is governed by the license
 // that can be found in the LICENSE file.
 
-package main
+package interlock
 
 import (
 	"fmt"
@@ -19,7 +19,7 @@ var URIPattern = regexp.MustCompile("/api/([A-Za-z0-9]+)/([a-z0-9_]+)")
 
 func applyHeaders(h http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "script-src 'self' 'unsafe-eval'; object-src 'none';")
+		w.Header().Set("Content-Security-Policy", "default-src https:; script-src https: 'self' 'unsafe-eval' 'unsafe-inline'; style-src https: 'self' 'unsafe-inline'; img-src https: 'self'; connect-src https: 'self';")
 		w.Header().Set("Cache-Control", "no-cache, no-store, max-age=0, must-revalidate")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "Fri, 07 Jan 1981 00:00:00 GMT")
@@ -77,7 +77,7 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 
 			switch u.Path {
 			case "/api/file/upload":
-				http.Error(w, err.Error(), 401)
+				http.Error(w, err.Error(), http.StatusUnauthorized)
 			case "/api/file/download":
 				// download is an exception as it is already
 				// protected from XSRF with its own unique
@@ -108,53 +108,55 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	case "/api/auth/poweroff":
 		res = poweroff(w)
 	case "/api/luks/change":
-		res = passwordRequest(w, r, _change)
+		res = passwordRequest(r, _change)
 	case "/api/luks/add":
-		res = passwordRequest(w, r, _add)
+		res = passwordRequest(r, _add)
 	case "/api/luks/remove":
-		res = passwordRequest(w, r, _remove)
+		res = passwordRequest(r, _remove)
 	case "/api/config/time":
-		res = setTime(w, r)
+		res = setTime(r)
 	case "/api/file/list":
-		res = fileList(w, r)
+		res = fileList(r)
 	case "/api/file/upload":
 		fileUpload(w, r)
 	case "/api/file/download":
-		res = fileDownload(w, r)
+		res = fileDownload(r)
 	case "/api/file/delete":
-		res = fileDelete(w, r)
+		res = fileDelete(r)
 	case "/api/file/move":
-		res = fileMove(w, r)
+		res = fileMove(r)
 	case "/api/file/copy":
-		res = fileCopy(w, r)
+		res = fileCopy(r)
+	case "/api/file/new":
+		res = fileNewfile(r)
 	case "/api/file/mkdir":
-		res = fileMkdir(w, r)
+		res = fileMkdir(r)
 	case "/api/file/extract":
-		res = fileExtract(w, r)
+		res = fileExtract(r)
 	case "/api/file/compress":
 		res = fileCompress(w, r)
 	case "/api/file/encrypt":
-		res = fileEncrypt(w, r)
+		res = fileEncrypt(r)
 	case "/api/file/decrypt":
-		res = fileDecrypt(w, r)
+		res = fileDecrypt(r)
 	case "/api/file/sign":
-		res = fileSign(w, r)
+		res = fileSign(r)
 	case "/api/file/verify":
-		res = fileVerify(w, r)
+		res = fileVerify(r)
 	case "/api/crypto/ciphers":
-		res = ciphers(w)
+		res = ciphers()
 	case "/api/crypto/keys":
-		res = keys(w, r)
+		res = keys(r)
 	case "/api/crypto/gen_key":
-		res = genKey(w, r)
+		res = genKey(r)
 	case "/api/crypto/upload_key":
-		res = uploadKey(w, r)
+		res = uploadKey(r)
 	case "/api/crypto/key_info":
-		res = keyInfo(w, r)
+		res = keyInfo(r)
 	case "/api/status/version":
-		res = versionStatus(w)
+		res = versionStatus()
 	case "/api/status/running":
-		res = runningStatus(w)
+		res = runningStatus()
 	default:
 		m := URIPattern.FindStringSubmatch(r.RequestURI)
 
@@ -162,12 +164,12 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 			cipher, err := conf.GetAvailableCipher(m[1])
 
 			if err != nil {
-				res = notFound(w)
+				res = notFound()
 			} else {
-				res = cipher.HandleRequest(w, r)
+				res = cipher.HandleRequest(r)
 			}
 		} else {
-			res = notFound(w)
+			res = notFound()
 		}
 	}
 
@@ -176,7 +178,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func notFound(w http.ResponseWriter) (res jsonObject) {
+func notFound() (res jsonObject) {
 	res = jsonObject{
 		"status":   "INVALID",
 		"response": []string{"invalid method"},
@@ -187,7 +189,7 @@ func notFound(w http.ResponseWriter) (res jsonObject) {
 
 func sendResponse(w http.ResponseWriter, res jsonObject) {
 	if conf.Debug {
-		log.Printf(res.String())
+		log.Print(res.String())
 	}
 
 	fmt.Fprint(w, res.String())

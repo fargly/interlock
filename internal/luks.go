@@ -1,10 +1,12 @@
-// INTERLOCK | https://github.com/inversepath/interlock
-// Copyright (c) 2015-2016 Inverse Path S.r.l.
+// INTERLOCK | https://github.com/f-secure-foundry/interlock
+// Copyright (c) F-Secure Corporation
 //
 // Use of this source code is governed by the license
 // that can be found in the LICENSE file.
+//
+//+build linux
 
-package main
+package interlock
 
 import (
 	"crypto/md5"
@@ -14,6 +16,7 @@ import (
 	"log/syslog"
 	"net/http"
 	"os/user"
+	"strings"
 	"syscall"
 )
 
@@ -25,7 +28,7 @@ const (
 	_remove
 )
 
-func passwordRequest(w http.ResponseWriter, r *http.Request, mode int) (res jsonObject) {
+func passwordRequest(r *http.Request, mode int) (res jsonObject) {
 	var newPassword string
 
 	req, err := parseRequest(r)
@@ -65,7 +68,7 @@ func passwordRequest(w http.ResponseWriter, r *http.Request, mode int) (res json
 func luksOpen(volume string, password string) (err error) {
 	var key string
 
-	if traversalPattern.MatchString(volume) {
+	if strings.Contains(volume, traversalPattern) {
 		return errors.New("path traversal detected")
 	}
 
@@ -97,10 +100,10 @@ func luksOpen(volume string, password string) (err error) {
 }
 
 func luksMount() (err error) {
-	args := []string{"/dev/mapper/" + mapping, conf.mountPoint}
+	args := []string{"/dev/mapper/" + mapping, conf.MountPoint}
 	cmd := "/bin/mount"
 
-	status.Log(syslog.LOG_NOTICE, "mounting encrypted volume to %s", conf.mountPoint)
+	status.Log(syslog.LOG_NOTICE, "mounting encrypted volume to %s", conf.MountPoint)
 
 	_, err = execCommand(cmd, args, true, "")
 
@@ -114,7 +117,7 @@ func luksMount() (err error) {
 		return
 	}
 
-	args = []string{u.Username, conf.mountPoint}
+	args = []string{u.Username, conf.MountPoint}
 	cmd = "/bin/chown"
 
 	status.Log(syslog.LOG_NOTICE, "setting mount point permissions for user %s", u.Username)
@@ -125,10 +128,10 @@ func luksMount() (err error) {
 }
 
 func luksUnmount() (err error) {
-	args := []string{conf.mountPoint}
+	args := []string{conf.MountPoint}
 	cmd := "/bin/umount"
 
-	status.Log(syslog.LOG_NOTICE, "unmounting encrypted volume on %s", conf.mountPoint)
+	status.Log(syslog.LOG_NOTICE, "unmounting encrypted volume on %s", conf.MountPoint)
 
 	syscall.Sync()
 	_, err = execCommand(cmd, args, true, "")
@@ -154,7 +157,7 @@ func luksKeyOp(volume string, password string, newPassword string, mode int) (er
 	var newKey string
 	var keyInputs []string
 
-	if traversalPattern.MatchString(volume) {
+	if strings.Contains(volume, traversalPattern) {
 		return errors.New("path traversal detected")
 	}
 

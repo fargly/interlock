@@ -20,7 +20,8 @@ inode:
     "key_path":    boolean,  # true if path is within key storage
     "private":     boolean,  # true if path contains private keys
      ############  optional: ############
-    "key":         key       # key object
+    "key":         key,      # key object
+    "sha256":      string    # SHA256 message digest
   }
 
 cipher:
@@ -77,7 +78,7 @@ On a successful login the "INTERLOCK-Token" is returned as cookie via the
 
 The XSRF protection token "X-XSRFToken" is returned in the response payload.
 This token must be included by the client as HTTP header in every request to
-the backend.
+the backend (except for GET /api/file/download?id=<download_id>).
 
 The "dispose" boolean indicates that the LUKS password must be removed after
 mounting the encrypted partition, this is possible as long as one other valid
@@ -128,7 +129,7 @@ after session invalidation.
 
 ## POST api/config/time
 
-Set the device data and time. This function is specifically designed to ensure
+Set the device date and time. This function is specifically designed to ensure
 a correct date and time on non-routed USB armory devices (unable to set the
 clock on their own). The call is a non-op by default and can be enabled with
 the "set_time" configuration option.
@@ -177,7 +178,8 @@ Get the list of all files and directories under the specified path.
 
 request:
   {
-    "path":        string    # supports wildcards (e.g. *, ?)
+    "path":        string,   # supports wildcards (e.g. *, ?)
+    "sha256":      bool      # return SHA256 message digest
   }
 
 response:
@@ -226,6 +228,7 @@ response:
 
 Download a file, the file is specified by the download_id unique code returned
 by the POST to 'api/file/download'. The download_id is disposed after use.
+The XSRF protection token "X-XSRFToken" header is not required to be set.
 
 HTTP response codes:
   200: success
@@ -423,7 +426,8 @@ response:
     "status":      string,   # OK | KO | INVALID_SESSION | INVALID
     "response": {
       "revision" : string,   # revision
-      "build":     string    # build information
+      "build":     string,   # build information
+      "key_path":  string    # path for public/private key storage
     }
   }
 
@@ -455,65 +459,4 @@ response:
         }
       ]
     }
-  }
-
-# Signal API Methods
-
-  api/
-    Signal/         status, register, send
-
-## POST api/Signal/register
-
-Registers a Signal number, this is a 2-step process requiring verification of a
-code received over SMS or voice.
-
-verification request:
-  {
-    "contact":     string    # contact identifier (e.g. mobile number)
-    "type":        string    # voice | sms
-  }
-
-verification response:
-  {
-    "status":      string,   # OK | KO | INVALID_SESSION | INVALID
-    "response":    string    # verification code
-  }
-
-registration request:
-  {
-    "contact":     string    # contact identifier (e.g. mobile number)
-    "code":        string    # verification code
-  }
-
-registration response:
-  {
-    "status":      string,   # OK | KO | INVALID_SESSION | INVALID
-    "response":    string    # error string
-  }
-
-## POST api/Signal/send
-
-Transmits a Signal message.
-
-request:
-  {
-    "contact":     string    # contact identifier
-    "msg":         string    # text message
-     ############  optional: ############
-    "attachment":  string    # attachment path
-  }
-
-## POST api/Signal/history
-
-Retrieve chat history for a contact.
-
-request:
-  {
-    "contact":     string    # contact identifier
-  }
-
-response:
-  {
-    "status":      string,   # OK | KO | INVALID_SESSION | INVALID
-    "response":    string    # chat history
   }

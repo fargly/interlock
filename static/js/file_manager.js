@@ -1,5 +1,5 @@
-/** INTERLOCK | https://github.com/inversepath/interlock
- * Copyright (c) 2015-2016 Inverse Path S.r.l.
+/** INTERLOCK | https://github.com/f-secure-foundry/interlock
+ * Copyright (c) F-Secure Corporation
  *
  * Use of this source code is governed by the license
  * that can be found in the LICENSE file.
@@ -73,11 +73,6 @@ Interlock.FileManager = new function() {
          This is necessary to prevent menu disappearing on Firefox */
       if (event.button !== undefined && event.button !== 2) {
         $('ul.inode_menu').remove();
-        /* unselect any previously selected file or directory if the user
-           performs a left click without the ctrl key pressed */
-        if (event.ctrlKey !== true) {
-          $('table.inodes_table tbody tr.ui-selected').removeClass('ui-selected');
-        }
       }
     });
 
@@ -89,6 +84,34 @@ Interlock.FileManager = new function() {
 
     /* register the on 'click' event to the refresh button */
     $('#refresh').on('click', function() { Interlock.FileManager.fileList('mainView'); });
+
+    /* register the on 'click' event to the new file button */
+    $('#add_new_file').on('click', function() {
+      var buttons = { 'Create file': function() {
+          Interlock.FileManager.newfile(
+            sessionStorage['mainViewPwd'] + (sessionStorage['mainViewPwd'].slice(-1) === '/' ? '' : '/') + $('#file').val(), 
+            $('#data').val()
+          );
+        }
+      };
+
+      var elements = [$(document.createElement('input')).attr('id', 'file')
+                                                        .attr('name', 'file')
+                                                        .attr('placeholder', 'file name')
+                                                        .attr('type', 'text')
+                                                        .addClass('text ui-widget-content ui-corner-all'),
+                      $(document.createElement('textarea')).attr('id', 'data')
+                                                           .attr('name', 'data')
+                                                           .attr('cols', 70)
+                                                           .attr('rows', 20)
+                                                           .attr('spellcheck', false)
+                                                           .attr('placeholder', 'contents')
+                                                           .addClass('text ui-widget-content ui-corner-all')];
+
+      Interlock.UI.modalFormConfigure({ elements: elements, buttons: buttons,
+        title: 'Create new file', height: 600, width: 550 });
+      Interlock.UI.modalFormDialog('open');
+    });
 
     /* register the on 'click' event to the new directory button */
     $('#add_new_directory').on('click', function() {
@@ -364,6 +387,14 @@ Interlock.FileManager = new function() {
 
       } else {
         $inode.addClass('file');
+
+	/* removes selection when clicking again on a selected file */
+        $inodeName.click(function(event) {
+          $inode.removeClass('ui-selected');
+
+          event.stopPropagation();
+          event.preventDefault();
+        });
       }
 
       if (inode.private) {
@@ -1087,6 +1118,12 @@ Interlock.FileManager = new function() {
           });
         }));
 
+        /* file checksum */
+        menuEntries.push($(document.createElement('li')).text('Checksum')
+                                                        .click(function() {
+                                                          Interlock.FileManager.fileChecksum(inode.name);
+                                                        }));
+
         /* add 'Key Info' menu - except for password.
            Reduntant, password keys cannot be uploaded in first place. */
         if (inode.key) {
@@ -1406,7 +1443,7 @@ Interlock.FileManager.fileList = function(view, pwd, sort) {
     Interlock.UI.ajaxLoader('#upload_form > fieldset');
 
     Interlock.Backend.APIRequest(Interlock.Backend.API.file.list, 'POST',
-      JSON.stringify({path: pwd}), 'FileManager.fileListCallback',
+      JSON.stringify({path: pwd, sha256: false}), 'FileManager.fileListCallback',
       null, {view: view, pwd: pwd, sort: sort});
   } catch (e) {
     $('#upload_form > fieldset > .ajax_overlay').remove();
@@ -1489,6 +1526,70 @@ Interlock.FileManager.fileDownload = function(path) {
   } catch (e) {
     Interlock.Session.createEvent({'kind': 'critical',
       'msg': '[Interlock.FileManager.fileDownload] ' + e});
+  }
+};
+
+/**
+ * @function
+ * @public
+ *
+ * @description
+ * Callback function, display file checksum
+ *
+ * @param {Object} backendData
+ * @returns {}
+ */
+Interlock.FileManager.fileChecksumCallback = function(backendData, args) {
+  try {
+    if (backendData.status === 'OK') {
+      var inodes = backendData.response.inodes;
+
+      $.each(inodes, function(index, inode) {
+        if (inode.dir !== true && inode.name === args.name && inode.sha256 !== '') {
+
+          var buttons = {'Close': function() { Interlock.UI.modalFormDialog('close'); } };
+          var elements = [$(document.createElement('p')).text(inode.name),
+                          $(document.createElement('p')).text(inode.sha256 + ' (SHA256)')];
+
+          Interlock.UI.modalFormConfigure({elements: elements, buttons: buttons,
+                                           noCancelButton: true, submitButton: 'Close',
+                                           title: 'File Checksum', height: 200, width: 800});
+
+          Interlock.UI.modalFormDialog('open');
+          return;
+        }
+      });
+    } else {
+      Interlock.Session.createEvent({'kind': backendData.status,
+        'msg': '[Interlock.FileManager.fileChecksumCallback] ' + backendData.response});
+    }
+  } catch (e) {
+    Interlock.Session.createEvent({'kind': 'critical',
+      'msg': '[Interlock.FileManager.fileChecksumCallback] ' + e});
+  } finally {
+    $('#upload_form > fieldset > .ajax_overlay').remove();
+  }
+};
+
+/**
+ * @function
+ * @public
+ *
+ * @description
+ * Get the checksum of a file
+ *
+ * @param {string} path fullpath of the file
+ * @returns {}
+ */
+Interlock.FileManager.fileChecksum = function(name) {
+  try {
+    Interlock.UI.ajaxLoader('#upload_form > fieldset');
+
+    Interlock.Backend.APIRequest(Interlock.Backend.API.file.list, 'POST',
+      JSON.stringify({path: sessionStorage.mainViewPwd, sha256: true}), 'FileManager.fileChecksumCallback', null, {name: name});
+  } catch (e) {
+    Interlock.Session.createEvent({'kind': 'critical',
+      'msg': '[Interlock.FileManager.fileChecksum] ' + e});
   }
 };
 
@@ -1607,6 +1708,52 @@ Interlock.FileManager.fileDelete = function(path) {
  *
  * @description
  * Callback function, refresh the file listed in the mainView according with
+ * the current pwd after file creation
+ *
+ * @param {Object} commandArguments
+ * @returns {}
+ */
+Interlock.FileManager.newfileCallback = function(backendData) {
+  try {
+    if (backendData.status === 'OK') {
+      Interlock.UI.modalFormDialog('close');
+      Interlock.FileManager.fileList('mainView');
+    } else {
+      Interlock.Session.createEvent({'kind': backendData.status,
+        'msg': '[Interlock.FileManager.newfileCallback] ' + backendData.response});
+    }
+  } catch (e) {
+    Interlock.Session.createEvent({'kind': 'critical', 'msg':
+      '[Interlock.FileManager.newfileCallback] ' + e});
+  }
+};
+
+/**
+ * @function
+ * @public
+ *
+ * @description
+ * Creates a new file under the current mainView pwd
+ *
+ * @param [{string}, {string}] path fullpath of the directory to create
+ * @returns {}
+ */
+Interlock.FileManager.newfile = function(path, contents) {
+  try {
+    Interlock.Backend.APIRequest(Interlock.Backend.API.file.newfile, 'POST',
+      JSON.stringify({path: path, contents: contents}), 'FileManager.newfileCallback');
+  } catch (e) {
+    Interlock.Session.createEvent({'kind': 'critical',
+      'msg': '[Interlock.FileManager.newfile] ' + e});
+  }
+};
+
+/**
+ * @function
+ * @public
+ *
+ * @description
+ * Callback function, refresh the file listed in the mainView according with
  * the current pwd after directory creation
  *
  * @param {Object} commandArguments
@@ -1662,7 +1809,6 @@ Interlock.FileManager.fileCopyCallback = function(backendData, args) {
   try {
     if (backendData.status === 'OK') {
       Interlock.FileManager.fileList('mainView');
-      sessionStorage.clipBoard = JSON.stringify({ 'action': 'none', 'paths': undefined, 'isSingleFile': false });
     } else {
       Interlock.Session.createEvent({'kind': backendData.status,
         'msg': '[Interlock.FileManager.fileCopy] ' + backendData.response});

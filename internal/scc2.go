@@ -1,13 +1,14 @@
-// INTERLOCK | https://github.com/inversepath/interlock
-// Copyright (c) 2015-2016 Inverse Path S.r.l.
+// INTERLOCK | https://github.com/f-secure-foundry/interlock
+// Copyright (c) F-Secure Corporation
 //
 // Use of this source code is governed by the license
 // that can be found in the LICENSE file.
+//
+//+build linux,arm
 
-package main
+package interlock
 
 import (
-	"bytes"
 	"crypto/aes"
 	"crypto/rand"
 	"errors"
@@ -30,13 +31,24 @@ const (
 // scc2_mode
 const (
 	encryptCBC = 0
-	decryptCBC = 1
 )
 
-// Identical to AES-256-OFB (see aes.go) but the derived key is encrypted,
-// before use, with AES-256-CBC using the NXP Security Controller (SCCv2) with
-// its device specific secret key. This uniquely ties the derived key to the
-// specific hardware unit being used.
+// Symmetric file encryption using AES-256-OFB.
+//
+// A first key is derived from password using PBKDF2 with SHA256 and 4096
+// rounds, this key is then encrypted with AES-256-CBC using the NXP Security
+// Controller (SCCv2) with its device specific secret key.
+//
+// This uniquely ties the derived key to the specific hardware unit being used,
+// as well as the authentication password.
+//
+// See https://github.com/f-secure-foundry/mxs-scc2 for detailed information on
+// the SCCv2 encryption process.
+//
+// The salt, initialization vector are prepended to the encrypted file, the
+// HMAC for authentication is appended:
+//
+// salt (8 bytes) || iv (16 bytes) || ciphertext || hmac (32 bytes)
 
 type aes256SCC struct {
 	info     cipherInfo
@@ -123,7 +135,7 @@ func (a *aes256SCC) Encrypt(input *os.File, output *os.File, sign bool) (err err
 		return
 	}
 
-	salt, key, err := DeriveKeyPBKDF2(nil, a.password)
+	salt, key, err := deriveKeyPBKDF2(nil, a.password, derivedKeySize)
 
 	if err != nil {
 		return
@@ -135,7 +147,7 @@ func (a *aes256SCC) Encrypt(input *os.File, output *os.File, sign bool) (err err
 		return
 	}
 
-	err = EncryptOFB(deviceKey, salt, iv, input, output)
+	err = encryptOFB(deviceKey, salt, iv, input, output)
 
 	return
 }
@@ -159,7 +171,7 @@ func (a *aes256SCC) Decrypt(input *os.File, output *os.File, verify bool) (err e
 		return
 	}
 
-	_, key, err := DeriveKeyPBKDF2(salt, a.password)
+	_, key, err := deriveKeyPBKDF2(salt, a.password, derivedKeySize)
 
 	if err != nil {
 		return
@@ -171,7 +183,7 @@ func (a *aes256SCC) Decrypt(input *os.File, output *os.File, verify bool) (err e
 		return
 	}
 
-	err = DecryptOFB(deviceKey, salt, iv, input, output)
+	err = decryptOFB(deviceKey, salt, iv, input, output)
 
 	return
 }
@@ -203,18 +215,18 @@ func (a *aes256SCC) GenOTP(timestamp int64) (otp string, exp int64, err error) {
 	return
 }
 
-func (a *aes256SCC) HandleRequest(w http.ResponseWriter, r *http.Request) (res jsonObject) {
-	res = notFound(w)
+func (a *aes256SCC) HandleRequest(r *http.Request) (res jsonObject) {
+	res = notFound()
 	return
 }
 
-func (h *SCC) DeriveKey(plaintext []byte, iv []byte) (ciphertext []byte, err error) {
-	return SCCDeriveKey(plaintext, iv)
+func (h *SCC) DeriveKey(diversifier []byte, iv []byte) (key []byte, err error) {
+	return SCCDeriveKey(diversifier, iv)
 }
 
 // equivalent to PKCS#11 C_DeriveKey with CKM_AES_CBC_ENCRYPT_DATA
-func SCCDeriveKey(baseKey []byte, iv []byte) (derivedKey []byte, err error) {
-	var ivPtr [16]byte
+func SCCDeriveKey(diversifier []byte, iv []byte) (key []byte, err error) {
+	var ivPtr [aes.BlockSize]byte
 	copy(ivPtr[:], iv[:])
 
 	scc, err := os.OpenFile(sccDevice, os.O_RDWR, 0600)
@@ -223,9 +235,8 @@ func SCCDeriveKey(baseKey []byte, iv []byte) (derivedKey []byte, err error) {
 		return
 	}
 
-	// LOCK_EX and defer LOCK_UN
-	syscall.Flock(int(scc.Fd()), 2)
-	defer syscall.Flock(int(scc.Fd()), 8)
+	syscall.Flock(int(scc.Fd()), syscall.LOCK_EX)
+	defer syscall.Flock(int(scc.Fd()), syscall.LOCK_UN)
 	defer scc.Close()
 
 	err = ioctl(scc.Fd(), setMode, encryptCBC)
@@ -240,43 +251,28 @@ func SCCDeriveKey(baseKey []byte, iv []byte) (derivedKey []byte, err error) {
 		return
 	}
 
-	r := len(baseKey) % 16
+	diversifier = PKCS7Pad(diversifier, false)
 
-	if r != 0 {
-		padLen := aes.BlockSize - r
-		padding := []byte{(byte)(padLen)}
-		padding = bytes.Repeat(padding, padLen)
-		baseKey = append(baseKey, padding...)
+	if len(diversifier) > aes.BlockSize*256 {
+		err = errors.New("input diversifier exceeds maximum length for SCC key derivation")
+		return
 	}
 
-	if len(baseKey) > aes.BlockSize*256 {
-	}
-
-	_, err = scc.Write(baseKey)
+	_, err = scc.Write(diversifier)
 
 	if err != nil {
 		err = errors.New("SCC key derivation input length exceeded")
 		return
 	}
 
-	buf := make([]byte, len(baseKey))
+	buf := make([]byte, len(diversifier))
 	_, err = scc.Read(buf)
 
 	if err != nil {
 		return
 	}
 
-	derivedKey = buf
-
-	return
-}
-
-func ioctl(fd, cmd, arg uintptr) (err error) {
-	_, _, e := syscall.Syscall(syscall.SYS_IOCTL, fd, cmd, arg)
-
-	if e != 0 {
-		return syscall.Errno(e)
-	}
+	key = buf
 
 	return
 }

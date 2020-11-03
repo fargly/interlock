@@ -1,10 +1,10 @@
-// INTERLOCK | https://github.com/inversepath/interlock
-// Copyright (c) 2015-2016 Inverse Path S.r.l.
+// INTERLOCK | https://github.com/f-secure-foundry/interlock
+// Copyright (c) F-Secure Corporation
 //
 // Use of this source code is governed by the license
 // that can be found in the LICENSE file.
 
-package main
+package interlock
 
 import (
 	"io/ioutil"
@@ -14,7 +14,7 @@ import (
 )
 
 func TestTOTP(t *testing.T) {
-	conf.mountPoint = "/tmp"
+	conf.MountPoint = "/tmp"
 	timestamp := int64(1430051641)
 	testSecKey := "this is a TOTP test k"
 	totp := &tOTP{}

@@ -1,10 +1,10 @@
-// INTERLOCK | https://github.com/inversepath/interlock
-// Copyright (c) 2015-2016 Inverse Path S.r.l.
+// INTERLOCK | https://github.com/f-secure-foundry/interlock
+// Copyright (c) F-Secure Corporation
 //
 // Use of this source code is governed by the license
 // that can be found in the LICENSE file.
 
-package main
+package interlock
 
 import (
 	"crypto/rand"
@@ -22,6 +22,8 @@ import (
 
 	"golang.org/x/crypto/pbkdf2"
 )
+
+const derivedKeySize = 32
 
 type key struct {
 	Identifier string `json:"identifier"`
@@ -71,7 +73,7 @@ type cipherInterface interface {
 	// One Time Password
 	GenOTP(timestamp int64) (otp string, exp int64, err error)
 	// cipher specific API request handler
-	HandleRequest(http.ResponseWriter, *http.Request) jsonObject
+	HandleRequest(*http.Request) jsonObject
 }
 
 type HSMInterface interface {
@@ -80,10 +82,10 @@ type HSMInterface interface {
 	// return a fresh cipher instance
 	Cipher() cipherInterface
 	// derive key
-	DeriveKey(baseKey []byte, iv []byte) (derivedKey []byte, err error)
+	DeriveKey(diversifier []byte, iv []byte) (derivedKey []byte, err error)
 }
 
-func ciphers(w http.ResponseWriter) (res jsonObject) {
+func ciphers() (res jsonObject) {
 	ciphers := []cipherInfo{}
 
 	for _, v := range conf.enabledCiphers {
@@ -110,7 +112,7 @@ func (k *key) Store(cipher cipherInterface, data string) (err error) {
 	}
 
 	k.Path = filepath.Join(conf.KeyPath, cipher.GetInfo().Extension, subdir, fileName)
-	keyPath := filepath.Join(conf.mountPoint, k.Path)
+	keyPath := filepath.Join(conf.MountPoint, k.Path)
 
 	err = os.MkdirAll(path.Dir(keyPath), 0700)
 
@@ -136,7 +138,7 @@ func (k *key) Store(cipher cipherInterface, data string) (err error) {
 	return
 }
 
-func keyInfo(w http.ResponseWriter, r *http.Request) (res jsonObject) {
+func keyInfo(r *http.Request) (res jsonObject) {
 	req, err := parseRequest(r)
 
 	if err != nil {
@@ -245,7 +247,7 @@ func getKey(path string) (k key, cipher cipherInterface, err error) {
 func getKeys(cipher cipherInterface, private bool, filter string) (keys []key, err error) {
 	var subdir string
 
-	basePath := filepath.Join(conf.mountPoint, conf.KeyPath, cipher.GetInfo().Extension)
+	basePath := filepath.Join(conf.MountPoint, conf.KeyPath, cipher.GetInfo().Extension)
 
 	if private {
 		subdir = "private"
@@ -294,7 +296,7 @@ func getKeys(cipher cipherInterface, private bool, filter string) (keys []key, e
 	return
 }
 
-func keys(w http.ResponseWriter, r *http.Request) (res jsonObject) {
+func keys(r *http.Request) (res jsonObject) {
 	var filter string
 	var cipherName string
 
@@ -348,7 +350,7 @@ func keys(w http.ResponseWriter, r *http.Request) (res jsonObject) {
 	return
 }
 
-func genKey(w http.ResponseWriter, r *http.Request) (res jsonObject) {
+func genKey(r *http.Request) (res jsonObject) {
 	req, err := parseRequest(r)
 
 	if err != nil {
@@ -421,7 +423,7 @@ func genKey(w http.ResponseWriter, r *http.Request) (res jsonObject) {
 	return
 }
 
-func uploadKey(w http.ResponseWriter, r *http.Request) (res jsonObject) {
+func uploadKey(r *http.Request) (res jsonObject) {
 	req, err := parseRequest(r)
 
 	if err != nil {
@@ -472,7 +474,7 @@ func uploadKey(w http.ResponseWriter, r *http.Request) (res jsonObject) {
 	return
 }
 
-func DeriveKeyPBKDF2(salt []byte, password string) (randSalt []byte, key []byte, err error) {
+func deriveKeyPBKDF2(salt []byte, password string, size int) (randSalt []byte, key []byte, err error) {
 	if len(salt) == 0 {
 		randSalt = make([]byte, 8)
 		_, err = io.ReadFull(rand.Reader, randSalt)
@@ -484,7 +486,7 @@ func DeriveKeyPBKDF2(salt []byte, password string) (randSalt []byte, key []byte,
 		salt = randSalt
 	}
 
-	key = pbkdf2.Key([]byte(password), salt, 4096, 32, sha256.New)
+	key = pbkdf2.Key([]byte(password), salt, 4096, size, sha256.New)
 
 	return
 }
